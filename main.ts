@@ -32,6 +32,7 @@ interface ViwoodsSettings {
     createIndex: boolean;
     dateFormat: 'iso' | 'us' | 'eu';
     filePrefix: string;
+    processWithGemini: boolean;
 }
 
 interface Stroke {
@@ -50,7 +51,8 @@ const DEFAULT_SETTINGS: ViwoodsSettings = {
     includeThumbnails: false,
     createIndex: false,
     dateFormat: 'iso',
-    filePrefix: ''
+    filePrefix: '',
+    processWithGemini: false
 };
 
 export default class ViwoodsImporterPlugin extends Plugin {
@@ -97,27 +99,27 @@ export default class ViwoodsImporterPlugin extends Plugin {
     }
 
     handleDragOver(evt: DragEvent) {
-		if (evt.dataTransfer && this.hasNoteFile(evt.dataTransfer)) {
-			evt.preventDefault();
-			evt.dataTransfer.dropEffect = 'copy';
-		}
-	}
+        if (evt.dataTransfer && this.hasNoteFile(evt.dataTransfer)) {
+            evt.preventDefault();
+            evt.dataTransfer.dropEffect = 'copy';
+        }
+    }
 
-	async handleDrop(evt: DragEvent) {
-		if (!evt.dataTransfer || !this.hasNoteFile(evt.dataTransfer)) return;
-		
-		evt.preventDefault();
-		
-		const files = Array.from(evt.dataTransfer.files);
-		const noteFiles = files.filter(f => f.name.endsWith('.note') || f.name.endsWith('.zip'));
-		
-		if (noteFiles.length > 0) {
-			new Notice(`Importing ${noteFiles.length} Viwoods note(s)...`);
-			for (const file of noteFiles) {
-				await this.processNoteFile(file);
-			}
-		}
-	}
+    async handleDrop(evt: DragEvent) {
+        if (!evt.dataTransfer || !this.hasNoteFile(evt.dataTransfer)) return;
+        
+        evt.preventDefault();
+        
+        const files = Array.from(evt.dataTransfer.files);
+        const noteFiles = files.filter(f => f.name.endsWith('.note') || f.name.endsWith('.zip'));
+        
+        if (noteFiles.length > 0) {
+            new Notice(`Importing ${noteFiles.length} Viwoods note(s)...`);
+            for (const file of noteFiles) {
+                await this.processNoteFile(file);
+            }
+        }
+    }
 
     hasNoteFile(dataTransfer: DataTransfer | null): boolean {
         if (!dataTransfer) return false;
@@ -324,13 +326,15 @@ export default class ViwoodsImporterPlugin extends Plugin {
             markdownContent += '---\n\n';
         }
         
+        // Store image paths for Gemini processing
+        const imagePaths: string[] = [];
+        const imageFiles: TFile[] = [];
+        
         // Process images/SVGs
         for (let i = 0; i < images.length; i++) {
             const image = images[i];
             const pageNum = image.pageNum;
             
-			const stroke = strokes.find((s: Stroke) => s.pageNum === pageNum);
-			
             if (images.length > 1) {
                 markdownContent += `## Page ${pageNum}\n\n`;
             }
@@ -352,10 +356,18 @@ export default class ViwoodsImporterPlugin extends Plugin {
                 const processedImage = await this.processImage(image.blob);
                 const imageName = `${noteName}_page${pageNum}.png`;
                 const imagePath = `${this.settings.imagesFolder}/${imageName}`;
-                await this.app.vault.createBinary(normalizePath(imagePath), processedImage);
+                const imageFile = await this.app.vault.createBinary(normalizePath(imagePath), processedImage);
+                
+                imagePaths.push(imagePath);
+                imageFiles.push(imageFile);
                 
                 if (this.settings.outputFormat === 'png') {
                     markdownContent += `![Page ${pageNum}](${imageName})\n\n`;
+                    
+                    // Add placeholder for Gemini processing if enabled
+                    if (this.settings.processWithGemini) {
+                        markdownContent += `<!-- GEMINI_PLACEHOLDER_${pageNum} -->\n\n`;
+                    }
                 }
             }
         }
@@ -374,7 +386,137 @@ export default class ViwoodsImporterPlugin extends Plugin {
         
         // Save markdown file
         const mdPath = `${this.settings.notesFolder}/${noteName}.md`;
-        await this.app.vault.create(normalizePath(mdPath), markdownContent);
+        const newNoteFile = await this.app.vault.create(normalizePath(mdPath), markdownContent);
+        
+        // Trigger Gemini processing if enabled
+        if (this.settings.processWithGemini && imageFiles.length > 0) {
+            await this.processWithGemini(newNoteFile, imageFiles, images);
+        }
+    }
+
+    async processWithGemini(noteFile: TFile, imageFiles: TFile[], images: any[]) {
+        const app = this.app as any;
+        
+        // Check if Gemini plugin is available
+        if (!app.plugins?.enabledPlugins?.has('gemini-note-processor')) {
+            new Notice('Gemini Note Processor plugin not found or disabled');
+            return;
+        }
+        
+        const geminiPlugin = app.plugins.plugins['gemini-note-processor'];
+        if (!geminiPlugin) {
+            new Notice('Could not access Gemini plugin');
+            return;
+        }
+        
+        new Notice('Processing with Gemini AI...');
+        
+        // Process each image and collect results
+        const processedTexts: Map<number, string> = new Map();
+        const allDetectedTags: Set<string> = new Set();
+        
+        for (let i = 0; i < imageFiles.length; i++) {
+            const imageFile = imageFiles[i];
+            const pageNum = images[i].pageNum;
+            
+            try {
+                // Read the image data
+                const imageData = await this.app.vault.readBinary(imageFile);
+                
+                // Call Gemini API directly from the plugin
+                const resultText = await geminiPlugin.callGeminiAPI(imageData);
+                
+                if (resultText) {
+                    // Process triggers if enabled
+                    let processedText = resultText;
+                    if (geminiPlugin.settings.enableTriggerWords) {
+                        processedText = await geminiPlugin.processTriggersInText(resultText);
+                    }
+                    
+                    processedTexts.set(pageNum, processedText);
+                    
+                    // Extract detected tags from the response
+                    const tagRegex = /### Detected Tags\s*\n(.*?)(?:\n###|$)/s;
+                    const match = processedText.match(tagRegex);
+                    if (match && match[1] && match[1].toLowerCase().trim() !== 'none identified.') {
+                        const tags = match[1].split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag);
+                        tags.forEach((tag: string) => allDetectedTags.add(tag));
+                    }
+                }
+                
+                // Small delay between processing multiple images
+                if (i < imageFiles.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            } catch (error) {
+                console.error(`Failed to process image ${pageNum} with Gemini:`, error);
+                new Notice(`Failed to process page ${pageNum}`);
+            }
+        }
+        
+        // Now update the note with the processed text
+        if (processedTexts.size > 0) {
+            let noteContent = await this.app.vault.read(noteFile);
+            
+            // Replace placeholders with processed text
+            for (const [pageNum, text] of processedTexts) {
+                const placeholder = `<!-- GEMINI_PLACEHOLDER_${pageNum} -->`;
+                const replacement = `---\n### Gemini Transcription\n${text}\n---`;
+                noteContent = noteContent.replace(placeholder, replacement);
+            }
+            
+            // Update the note
+            await this.app.vault.modify(noteFile, noteContent);
+            
+            // Update frontmatter with detected tags and other metadata
+            if (allDetectedTags.size > 0 || geminiPlugin.settings.enableLocationTagging) {
+                await this.updateNotePropertiesAfterGemini(noteFile, Array.from(allDetectedTags), geminiPlugin);
+            }
+            
+            new Notice(`Gemini processing complete! Processed ${processedTexts.size} pages.`);
+            
+            // Open the note for viewing
+            await this.app.workspace.openLinkText(noteFile.path, '', false);
+        }
+    }
+    
+    async updateNotePropertiesAfterGemini(noteFile: TFile, detectedTags: string[], geminiPlugin: any) {
+        const currentYear = new Date().getFullYear();
+        
+        await this.app.fileManager.processFrontMatter(noteFile, (frontmatter) => {
+            // Ensure tags array exists
+            frontmatter.tags = frontmatter.tags || [];
+            if (!Array.isArray(frontmatter.tags)) { 
+                frontmatter.tags = [frontmatter.tags]; 
+            }
+            
+            // Add detected tags from Gemini
+            for (const tag of detectedTags) {
+                if (tag && !frontmatter.tags.includes(tag)) {
+                    frontmatter.tags.push(tag);
+                }
+            }
+            
+            // Add custom tags from Gemini settings if configured
+            if (geminiPlugin.settings.customTags) {
+                const customTags = geminiPlugin.settings.customTags.split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag);
+                for (const tag of customTags) {
+                    if (tag && !frontmatter.tags.includes(tag)) {
+                        frontmatter.tags.push(tag);
+                    }
+                }
+            }
+            
+            // Add current year tag
+            const yearTag = `notes${currentYear}`;
+            if (!frontmatter.tags.includes(yearTag)) {
+                frontmatter.tags.push(yearTag);
+            }
+            
+            // Mark as processed by Gemini
+            frontmatter.gemini_processed = true;
+            frontmatter.gemini_processed_date = new Date().toISOString();
+        });
     }
 
     async processImage(blob: Blob): Promise<ArrayBuffer> {
@@ -663,6 +805,43 @@ class ViwoodsSettingTab extends PluginSettingTab {
                     this.plugin.settings.includeThumbnails = value;
                     await this.plugin.saveSettings();
                 }));
+
+        // Gemini Integration Section
+        containerEl.createEl('h3', { text: 'Gemini Integration' });
+        
+        // Check for Gemini plugin status
+        const app = this.plugin.app as any;
+        const isGeminiEnabled = app.plugins?.enabledPlugins?.has('gemini-note-processor');
+        const geminiPlugin = app.plugins?.plugins?.['gemini-note-processor'];
+        
+        if (!isGeminiEnabled) {
+            containerEl.createEl('p', {
+                text: '⚠️ Gemini Note Processor plugin is not installed or enabled. Please install and enable it to use this feature.',
+                cls: 'setting-item-description mod-warning'
+            });
+        } else {
+            containerEl.createEl('p', {
+                text: '✅ Gemini Note Processor plugin is ready',
+                cls: 'setting-item-description'
+            });
+        }
+        
+        new Setting(containerEl)
+            .setName('Process with Gemini AI')
+            .setDesc('Automatically transcribe handwritten notes using Gemini AI after import (text will be inserted below images)')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.processWithGemini)
+                .onChange(async (value) => {
+                    this.plugin.settings.processWithGemini = value;
+                    await this.plugin.saveSettings();
+                }));
+        
+        if (this.plugin.settings.processWithGemini && !isGeminiEnabled) {
+            containerEl.createEl('p', {
+                text: 'Processing is enabled but the Gemini plugin is not available. Import will continue without AI processing.',
+                cls: 'setting-item-description'
+            });
+        }
 
         new Setting(containerEl)
             .setName('Date format')
