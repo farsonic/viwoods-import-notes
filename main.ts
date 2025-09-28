@@ -1847,6 +1847,7 @@ export default class ViwoodsImporterPlugin extends Plugin {
                     }
                     
                     // Process and add image
+                    // Process and add image
                     if (this.settings.outputFormat === 'png' || this.settings.outputFormat === 'both') {
                         const imageName = `${bookResult.bookName}_page_${String(pageNum).padStart(3, '0')}.png`;
                         const imagePath = `${imagesFolder}/${imageName}`;
@@ -1857,29 +1858,35 @@ export default class ViwoodsImporterPlugin extends Plugin {
                         
                         let imageFile: TFile;
                         
-                        if (existingImage instanceof TFile) {
-                            // Image exists - only update if page is new or modified
-                            if (isNew || isModified) {
-                                // Delete old image and create new one
-                                await this.app.vault.delete(existingImage);
+                        try {
+                            if (existingImage instanceof TFile) {
+                                // Image exists - only update if page is new or modified
+                                if (isNew || isModified) {
+                                    // Delete old image and create new one
+                                    await this.app.vault.delete(existingImage);
+                                    const imageArrayBuffer = await page.image.blob.arrayBuffer();
+                                    imageFile = await this.app.vault.createBinary(normalizedImagePath, imageArrayBuffer);
+                                } else {
+                                    // Use existing image
+                                    imageFile = existingImage;
+                                }
+                            } else {
+                                // Create new image
                                 const imageArrayBuffer = await page.image.blob.arrayBuffer();
                                 imageFile = await this.app.vault.createBinary(normalizedImagePath, imageArrayBuffer);
-                            } else {
-                                // Use existing image
-                                imageFile = existingImage;
                             }
-                        } else {
-                            // Create new image
-                            const imageArrayBuffer = await page.image.blob.arrayBuffer();
-                            imageFile = await this.app.vault.createBinary(normalizedImagePath, imageArrayBuffer);
-                        }
-                        
-                        pageContent += `![[${imageName}]]\n\n`;
-                        
-                        // Add placeholder for Gemini if enabled
-                        if (this.settings.processWithGemini && (isNew || isModified)) {
-                            pageContent += `<!-- GEMINI_PLACEHOLDER_${pageNum} -->\n\n`;
-                            imageFilesToProcess.push({ file: imageFile, pageNum });
+                            
+                            pageContent += `![[${imageName}]]\n\n`;
+                            
+                            // Add placeholder for Gemini if enabled
+                            if (this.settings.processWithGemini && (isNew || isModified)) {
+                                pageContent += `<!-- GEMINI_PLACEHOLDER_${pageNum} -->\n\n`;
+                                imageFilesToProcess.push({ file: imageFile, pageNum });
+                            }
+                        } catch (imageError) {
+                            console.error(`Failed to process image for page ${pageNum}:`, imageError);
+                            // Continue without image rather than failing the whole page
+                            pageContent += `*[Image failed to import]*\n\n`;
                         }
                     }
                     
@@ -2132,37 +2139,9 @@ export default class ViwoodsImporterPlugin extends Plugin {
     }
 
     async processImage(blob: Blob): Promise<ArrayBuffer> {
-        // Only process if we need to change the background
-        if (this.settings.backgroundColor === 'transparent' || 
-            this.settings.backgroundColor === '#FFFFFF' ||
-            !this.settings.backgroundColor) {
-            // Return original without modification
-            return await blob.arrayBuffer();
-        }
-        
-        // Only reprocess if background color change is needed
-        return new Promise((resolve) => {
-            const img = new Image();
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d')!;
-            
-            img.onload = () => {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                
-                ctx.fillStyle = this.settings.backgroundColor;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0);
-                
-                canvas.toBlob(async (processedBlob) => {
-                    if (processedBlob) {
-                        resolve(await processedBlob.arrayBuffer());
-                    }
-                }, 'image/png', 1.0); // Use maximum quality to ensure consistency
-            };
-            
-            img.src = URL.createObjectURL(blob);
-        });
+        // Don't modify the original image for storage
+        // This ensures hashes remain consistent
+        return await blob.arrayBuffer();
     }
 
     strokesToSVG(strokes: number[][], width = 1440, height = 1920): string {
@@ -2217,15 +2196,59 @@ export default class ViwoodsImporterPlugin extends Plugin {
         }
     }
 
+    async processImageForDisplay(blob: Blob): Promise<ArrayBuffer> {
+        // This separate function handles background color for display only
+        if (this.settings.backgroundColor === 'transparent' || 
+            this.settings.backgroundColor === '#FFFFFF' ||
+            !this.settings.backgroundColor) {
+            return await blob.arrayBuffer();
+        }
+        
+        return new Promise((resolve) => {
+            const img = new Image();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d')!;
+            
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                
+                ctx.fillStyle = this.settings.backgroundColor;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                
+                canvas.toBlob(async (processedBlob) => {
+                    if (processedBlob) {
+                        resolve(await processedBlob.arrayBuffer());
+                    }
+                }, 'image/png', 1.0);
+            };
+            
+            img.src = URL.createObjectURL(blob);
+        });
+    }
+
     async ensureFolder(path: string) {
         const folders = path.split('/');
         let currentPath = '';
         
         for (const folder of folders) {
             currentPath = currentPath ? `${currentPath}/${folder}` : folder;
-            const folderExists = this.app.vault.getAbstractFileByPath(normalizePath(currentPath));
+            const normalizedPath = normalizePath(currentPath);
+            const folderExists = this.app.vault.getAbstractFileByPath(normalizedPath);
+            
             if (!folderExists) {
-                await this.app.vault.createFolder(normalizePath(currentPath));
+                try {
+                    await this.app.vault.createFolder(normalizedPath);
+                } catch (error) {
+                    // Folder might have been created by another process or already exists
+                    // Just continue if we can't create it
+                    const checkAgain = this.app.vault.getAbstractFileByPath(normalizedPath);
+                    if (!checkAgain) {
+                        console.error(`Failed to create folder ${normalizedPath}:`, error);
+                        throw error; // Re-throw if folder really doesn't exist
+                    }
+                }
             }
         }
     }

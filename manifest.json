@@ -1,7 +1,7 @@
 {
     "id": "viwoods-notes-importer",
     "name": "Viwoods Notes Importer",
-    "version": "0.0.21",
+    "version": "0.0.24",
     "minAppVersion": "0.15.0",
     "description": "Import Viwoods .note files directly into Obsidian with support for handwritten notes, audio recordings, and stroke data conversion to SVG.",
     "author": "Your Name",
