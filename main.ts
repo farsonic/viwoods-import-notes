@@ -1,11 +1,11 @@
 // main.ts - Enhanced Viwoods Notes Importer Plugin for Obsidian
 
-import { 
-    App, 
-    Plugin, 
-    PluginSettingTab, 
-    Setting, 
-    Notice, 
+import {
+    App,
+    Plugin,
+    PluginSettingTab,
+    Setting,
+    Notice,
     TFile,
     TFolder,
     normalizePath,
@@ -26,6 +26,7 @@ declare global {
 // INTERFACES AND TYPES
 // ============================================================================
 
+// Update the ImportManifest interface to store original hashes
 interface ImportManifest {
     bookName: string;
     totalPages: number;
@@ -33,11 +34,13 @@ interface ImportManifest {
         [pageNumber: number]: {
             fileName: string;
             importDate: string;
-            imageHash: string;
+            imageHash: string; // This is the hash of the ORIGINAL unprocessed image
+            displayImageHash?: string; // Optional: hash of the processed display image
             geminiProcessed: boolean;
             hasAudio?: boolean;
             lastModified?: string;
             size?: number;
+            backgroundColor?: string; // Track what background was applied
         }
     };
     lastImport: string;
@@ -217,30 +220,75 @@ class EnhancedImportModal extends Modal {
         const modeContainer = contentEl.createDiv();
         modeContainer.createEl('label', { text: 'Import mode:' });
         
-        const importMode = modeContainer.createEl('select', { cls: 'dropdown' });
+        const importMode = modeContainer.createEl('select', { cls: 'dropdown' }) as HTMLSelectElement;
         importMode.style.cssText = 'width: 100%; margin: 10px 0;';
         
+        // Determine default selection based on what changed
+        let defaultMode = 'all';
+        
+        if (this.analysis) {
+            const hasNew = this.analysis.summary.newPages.length > 0;
+            const hasModified = this.analysis.summary.modifiedPages.length > 0;
+            
+            if (hasNew && hasModified) {
+                defaultMode = 'new-and-modified';
+            } else if (hasNew) {
+                defaultMode = 'new';
+            } else if (hasModified) {
+                defaultMode = 'modified';
+            } else {
+                // Nothing changed - don't default to importing everything
+                defaultMode = 'none';
+            }
+        }
+        
+        // Add options based on what's available
         if (this.analysis && this.analysis.summary.newPages.length > 0) {
-            importMode.createEl('option', { 
+            const option = importMode.createEl('option', { 
                 value: 'new', 
                 text: `Import new pages only (${this.analysis.summary.newPages.length} pages)` 
             });
+            if (defaultMode === 'new') option.selected = true;
         }
+        
         if (this.analysis && this.analysis.summary.modifiedPages.length > 0) {
-            importMode.createEl('option', { 
+            const option = importMode.createEl('option', { 
                 value: 'modified', 
                 text: `Import modified pages only (${this.analysis.summary.modifiedPages.length} pages)` 
             });
+            if (defaultMode === 'modified') option.selected = true;
         }
+        
         if (this.analysis && (this.analysis.summary.newPages.length > 0 || this.analysis.summary.modifiedPages.length > 0)) {
-            importMode.createEl('option', { 
+            const option = importMode.createEl('option', { 
                 value: 'new-and-modified', 
                 text: `Import new & modified pages (${this.analysis.summary.newPages.length + this.analysis.summary.modifiedPages.length} pages)` 
             });
+            if (defaultMode === 'new-and-modified') option.selected = true;
         }
-        importMode.createEl('option', { value: 'all', text: `Import all pages (${this.bookResult.pages.length} pages)` });
+        
+        // Always add "all" option, but don't select it by default unless it's first import
+        const allOption = importMode.createEl('option', { 
+            value: 'all', 
+            text: `Import all pages (${this.bookResult.pages.length} pages)` 
+        });
+        
+        // Only select "all" if this is first import or nothing else is selected
+        if (!this.existingManifest || (defaultMode === 'all' && importMode.options.length === 1)) {
+            allOption.selected = true;
+        }
+        
         importMode.createEl('option', { value: 'range', text: 'Import page range...' });
         importMode.createEl('option', { value: 'select', text: 'Select specific pages...' });
+        
+        // If nothing to import, add a "none" option and select it
+        if (defaultMode === 'none' && this.analysis) {
+            const noneOption = importMode.createEl('option', { 
+                value: 'none', 
+                text: 'No changes to import' 
+            });
+            noneOption.selected = true;
+        }
         
         // Page range selector
         const rangeContainer = contentEl.createDiv();
@@ -450,6 +498,9 @@ class EnhancedImportModal extends Modal {
                         }
                     });
                     break;
+                case 'none':
+                    // Import nothing
+                    break;
             }
             
             this.close();
@@ -463,7 +514,7 @@ class EnhancedImportModal extends Modal {
     }
 }
 
-// Progress Modal with detailed feedback
+// Progress Modal with feedback
 class ProgressModal extends Modal {
     progressBar: HTMLProgressElement;
     statusText: HTMLElement;
@@ -1124,6 +1175,71 @@ export default class ViwoodsImporterPlugin extends Plugin {
             }
         });
 
+        // Add this command in the onload() method after the other commands
+        this.addCommand({
+            id: 'reset-book-hashes',
+            name: 'Reset book hashes (fix change detection)',
+            callback: async () => {
+                // Show book selection dialog
+                const booksFolder = this.app.vault.getAbstractFileByPath(this.settings.notesFolder);
+                if (!(booksFolder instanceof TFolder)) {
+                    new Notice('No books found');
+                    return;
+                }
+                
+                const books = booksFolder.children
+                    .filter(child => child instanceof TFolder)
+                    .map(folder => folder.name);
+                
+                if (books.length === 0) {
+                    new Notice('No books found');
+                    return;
+                }
+                
+                // Simple selection modal
+                const modal = new Modal(this.app);
+                modal.titleEl.setText('Select Book to Reset');
+                
+                const select = modal.contentEl.createEl('select');
+                books.forEach(book => {
+                    select.createEl('option', { value: book, text: book });
+                });
+                
+                const buttonDiv = modal.contentEl.createDiv();
+                buttonDiv.style.cssText = 'margin-top: 20px; text-align: right;';
+                
+                const resetBtn = buttonDiv.createEl('button', { 
+                    text: 'Reset Hashes', 
+                    cls: 'mod-cta' 
+                });
+                
+                resetBtn.onclick = async () => {
+                    const bookName = select.value;
+                    const manifestPath = `${this.settings.notesFolder}/${bookName}/.import-manifest.json`;
+                    const manifest = await this.loadManifest(manifestPath);
+                    
+                    if (manifest) {
+                        // Mark all hashes as needing reset
+                        Object.keys(manifest.importedPages).forEach(pageNum => {
+                            // Use a special marker that indicates reset needed
+                            manifest.importedPages[parseInt(pageNum)].imageHash = 'RESET-' + Date.now();
+                        });
+                        
+                        await this.saveManifest(manifestPath, manifest);
+                        new Notice(`Reset hashes for ${bookName}. Next import will update them.`);
+                    } else {
+                        new Notice('No manifest found for this book');
+                    }
+                    
+                    modal.close();
+                };
+                
+                buttonDiv.createEl('button', { text: 'Cancel' }).onclick = () => modal.close();
+                
+                modal.open();
+            }
+        });
+
         // Register drag and drop handlers
         this.registerDomEvent(document, 'drop', this.handleDrop.bind(this));
         this.registerDomEvent(document, 'dragover', this.handleDragOver.bind(this));
@@ -1214,12 +1330,57 @@ export default class ViwoodsImporterPlugin extends Plugin {
             errors: []
         };
 
-        // Create a map of existing pages
-        const existingMap = new Map<number, ImportManifest['importedPages'][number]>();
-        if (existingManifest) {
-            Object.entries(existingManifest.importedPages).forEach(([pageNum, info]) => {
-                existingMap.set(parseInt(pageNum), info);
-            });
+        // Get the book folder path
+        const bookFolder = `${this.settings.notesFolder}/${bookResult.bookName}`;
+
+        // If no manifest exists, everything is new
+        if (!existingManifest) {
+            for (const page of bookResult.pages) {
+                changes.push({
+                    pageNum: page.pageNum,
+                    type: 'new',
+                    newHash: page.image.hash
+                });
+                summary.newPages.push(page.pageNum);
+            }
+            console.log('No existing manifest - all pages are new');
+            return { changes, summary };
+        }
+
+        // Create a map of existing pages with their actual hashes from files
+        const existingMap = new Map<number, { manifestInfo: any, fileHash?: string }>();
+        
+        // First populate from manifest
+        Object.entries(existingManifest.importedPages).forEach(([pageNum, info]) => {
+            existingMap.set(parseInt(pageNum), { manifestInfo: info });
+        });
+
+        // Now try to read actual hashes from the page files
+        for (const [pageNum, data] of existingMap.entries()) {
+            const pageFileName = `Page ${String(pageNum).padStart(3, '0')}.md`;
+            const pagePath = `${bookFolder}/${pageFileName}`;
+            const pageFile = this.app.vault.getAbstractFileByPath(pagePath);
+            
+            if (pageFile instanceof TFile) {
+                try {
+                    const content = await this.app.vault.read(pageFile);
+                    
+                    // Extract the original_image_hash from frontmatter
+                    const frontmatterRegex = /^---\n([\s\S]*?)\n---/;
+                    const match = content.match(frontmatterRegex);
+                    
+                    if (match) {
+                        const frontmatter = match[1];
+                        const hashMatch = frontmatter.match(/original_image_hash:\s*"?([a-f0-9]+)"?/);
+                        if (hashMatch) {
+                            data.fileHash = hashMatch[1];
+                            console.log(`Page ${pageNum}: Found hash in file: ${hashMatch[1].substring(0, 8)}...`);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Failed to read hash from page ${pageNum}:`, error);
+                }
+            }
         }
 
         // Check each page in the new import
@@ -1235,27 +1396,43 @@ export default class ViwoodsImporterPlugin extends Plugin {
                 });
                 summary.newPages.push(page.pageNum);
             } else {
-                // Check if modified
-                if (existing.imageHash !== page.image.hash) {
-                    console.log(`Page ${page.pageNum} detected as modified:`, {
-                        oldHash: existing.imageHash,
-                        newHash: page.image.hash,
-                        oldSize: existing.size,
-                        newSize: page.image.blob.size
-                    });
+                // Prefer the hash from the file over the manifest hash
+                const existingHash = existing.fileHash || existing.manifestInfo.imageHash;
+                
+                // Check if this is a special hash that can't be compared
+                const isRecoveredHash = existingHash.startsWith('recovered-');
+                const isResetHash = existingHash.startsWith('RESET-');
+                const hashesMatch = existingHash === page.image.hash;
+                
+                if (isRecoveredHash || isResetHash) {
+                    // Cannot reliably compare. Treat as 'modified' to force a hash update on re-import.
+                    console.log(`Page ${page.pageNum}: Special hash (${isRecoveredHash ? 'recovered' : 'reset'}), treating as modified`);
                     changes.push({
                         pageNum: page.pageNum,
                         type: 'modified',
-                        oldHash: existing.imageHash,
+                        oldHash: existingHash,
                         newHash: page.image.hash,
-                        hasAudioChange: !!page.audio !== !!existing.hasAudio
+                        hasAudioChange: !!page.audio !== !!existing.manifestInfo.hasAudio
+                    });
+                    summary.modifiedPages.push(page.pageNum);
+                } else if (!hashesMatch) {
+                    // Genuine modification
+                    console.log(`Page ${page.pageNum} modified: ${existingHash.substring(0, 8)}... → ${page.image.hash.substring(0, 8)}...`);
+                    console.log(`  Source: ${existing.fileHash ? 'file frontmatter' : 'manifest'}`);
+                    changes.push({
+                        pageNum: page.pageNum,
+                        type: 'modified',
+                        oldHash: existingHash,
+                        newHash: page.image.hash,
+                        hasAudioChange: !!page.audio !== !!existing.manifestInfo.hasAudio
                     });
                     summary.modifiedPages.push(page.pageNum);
                 } else {
+                    // Unchanged page
                     changes.push({
                         pageNum: page.pageNum,
                         type: 'unchanged',
-                        oldHash: existing.imageHash,
+                        oldHash: existingHash,
                         newHash: page.image.hash
                     });
                     summary.unchangedPages.push(page.pageNum);
@@ -1266,14 +1443,24 @@ export default class ViwoodsImporterPlugin extends Plugin {
             }
         }
 
-        // Any remaining in existingMap are deleted pages
-        existingMap.forEach((info, pageNum) => {
+        // Any remaining in existingMap are deleted pages (exist locally but not in import)
+        existingMap.forEach((data, pageNum) => {
+            const hash = data.fileHash || data.manifestInfo.imageHash;
             changes.push({
                 pageNum,
                 type: 'deleted',
-                oldHash: info.imageHash
+                oldHash: hash
             });
             summary.deletedPages.push(pageNum);
+        });
+
+        // Log summary
+        console.log('Change Analysis Summary:', {
+            total: bookResult.pages.length,
+            new: summary.newPages.length,
+            modified: summary.modifiedPages.length,
+            unchanged: summary.unchangedPages.length,
+            deleted: summary.deletedPages.length
         });
 
         return { changes, summary };
@@ -1357,16 +1544,13 @@ export default class ViwoodsImporterPlugin extends Plugin {
                     const imageFile = this.app.vault.getAbstractFileByPath(imagePath);
                     
                     if (imageFile instanceof TFile) {
-                        try {
-                            const imageData = await this.app.vault.readBinary(imageFile);
-                            const blob = new Blob([imageData]);
-                            imageHash = await this.hashImageData(blob);
-                            console.log(`Computed hash for recovered page ${pageNum}: ${imageHash}`);
-                        } catch (error) {
-                            console.error(`Failed to compute hash for page ${pageNum}:`, error);
-                            // Use deterministic fallback based on file stats
-                            imageHash = `recovered-${imageFile.stat.size}-${imageFile.stat.mtime}`;
-                        }
+                        // CORRECTED: We cannot reliably hash the processed image in the vault,
+                        // as it may have a background color.
+                        // Instead, use a deterministic placeholder based on file stats.
+                        // This special "recovered-" prefix signals to `analyzeChanges`
+                        // that the hash needs to be updated from a fresh import.
+                        imageHash = `recovered-${imageFile.stat.size}-${imageFile.stat.mtime}`;
+                        console.log(`Using recovered placeholder hash for page ${pageNum}: ${imageHash}`);
                     }
                     
                     manifest.importedPages[pageNum] = {
@@ -1387,15 +1571,21 @@ export default class ViwoodsImporterPlugin extends Plugin {
         if (Object.keys(manifest.importedPages).length > 0) {
             console.log(`Recovered manifest with ${Object.keys(manifest.importedPages).length} pages`);
             this.addHistoryEntry(manifest, 'import', Object.keys(manifest.importedPages).map(Number), 'Manifest recovered from existing files');
+            
             // Save the recovered manifest
             const manifestPath = `${bookFolder}/.import-manifest.json`;
-            await this.saveManifest(manifestPath, manifest);
+            try {
+                await this.saveManifest(manifestPath, manifest);
+            } catch (error) {
+                console.error('Failed to save recovered manifest:', error);
+                // Return the manifest anyway, it will be saved later
+            }
             return manifest;
         }
         
         return null;
     }
-
+    
     async loadManifest(manifestPath: string): Promise<ImportManifest | null> {
         console.log(`Attempting to load manifest from: ${manifestPath}`);
         const manifestFile = this.app.vault.getAbstractFileByPath(manifestPath);
@@ -1714,14 +1904,14 @@ export default class ViwoodsImporterPlugin extends Plugin {
     }
 
     async importSelectedPagesWithProgress(
-            bookResult: BookResult, 
-            pagesToImport: number[], 
-            existingManifest: ImportManifest | null
-        ): Promise<ImportSummary> {
-            const bookFolder = `${this.settings.notesFolder}/${bookResult.bookName}`;
-            await this.ensureFolder(bookFolder);
-            
-            const imagesFolder = `${bookFolder}/${this.settings.imagesFolder}`;
+        bookResult: BookResult, 
+        pagesToImport: number[], 
+        existingManifest: ImportManifest | null
+    ): Promise<ImportSummary> {
+        const bookFolder = `${this.settings.notesFolder}/${bookResult.bookName}`;
+        await this.ensureFolder(bookFolder);
+        
+        const imagesFolder = `${bookFolder}/${this.settings.imagesFolder}`;
         await this.ensureFolder(imagesFolder);
         
         const audioFolder = `${bookFolder}/${this.settings.audioFolder}`;
@@ -1788,6 +1978,8 @@ export default class ViwoodsImporterPlugin extends Plugin {
                         pageContent += `book: "${bookResult.bookName}"\n`;
                         pageContent += `page: ${pageNum}\n`;
                         pageContent += `total_pages: ${manifest.totalPages}\n`;
+                        pageContent += `original_image_hash: "${page.image.hash}"\n`; 
+                        
                         
                         if (this.settings.includeTimestamps) {
                             const createTime = bookResult.metadata.createTime || bookResult.metadata.creationTime;
@@ -1799,28 +1991,21 @@ export default class ViwoodsImporterPlugin extends Plugin {
                         pageContent += `import_date: ${new Date().toISOString()}\n`;
                         if (isModified) pageContent += `last_modified: ${new Date().toISOString()}\n`;
                         if (page.audio) pageContent += 'has_audio: true\n';
-                        pageContent += 'tags: [viwoods-import, handwritten]\n';
+
+                        const imageName = `${bookResult.bookName}_page_${String(pageNum).padStart(3, '0')}.png`;
+                        pageContent += `image: "${imageName}"\n`;
+                        
+                        // Create book tag from book name (sanitize for use as tag)
+                        const bookTag = bookResult.bookName
+                            .toLowerCase()
+                            .replace(/\s+/g, '-')  // Replace spaces with hyphens
+                            .replace(/[^a-z0-9-_]/g, '')  // Remove invalid characters
+                            .replace(/-+/g, '-')  // Replace multiple hyphens with single
+                            .replace(/^-|-$/g, '');  // Remove leading/trailing hyphens
+                        
+                        pageContent += 'tags: [viwoods-import, handwritten, ' + bookTag + ']\n';
                         pageContent += '---\n\n';
                     }
-                    
-                    pageContent += `# ${bookResult.bookName} - Page ${pageNum}\n\n`;
-                    
-                    // Add navigation links
-                    pageContent += '<div style="display: flex; justify-content: space-between; margin: 20px 0;">\n';
-                    if (pageNum > 1) {
-                        const prevPage = String(pageNum - 1).padStart(3, '0');
-                        pageContent += `  [[Page ${prevPage}|← Previous]]\n`;
-                    } else {
-                        pageContent += '  <span></span>\n';
-                    }
-                    pageContent += `  [[${bookResult.bookName} Index|Index]]\n`;
-                    if (pageNum < manifest.totalPages) {
-                        const nextPage = String(pageNum + 1).padStart(3, '0');
-                        pageContent += `  [[Page ${nextPage}|Next →]]\n`;
-                    } else {
-                        pageContent += '  <span></span>\n';
-                    }
-                    pageContent += '</div>\n\n';
                     
                     // Add audio if present
                     if (page.audio) {
@@ -1847,7 +2032,6 @@ export default class ViwoodsImporterPlugin extends Plugin {
                     }
                     
                     // Process and add image
-                    // Process and add image
                     if (this.settings.outputFormat === 'png' || this.settings.outputFormat === 'both') {
                         const imageName = `${bookResult.bookName}_page_${String(pageNum).padStart(3, '0')}.png`;
                         const imagePath = `${imagesFolder}/${imageName}`;
@@ -1859,21 +2043,29 @@ export default class ViwoodsImporterPlugin extends Plugin {
                         let imageFile: TFile;
                         
                         try {
+                            // Determine if we need to update the display image
+                            const needsImageUpdate = isNew || isModified;
+                            const backgroundChanged = existingManifest?.importedPages[pageNum]?.backgroundColor !== this.settings.backgroundColor;
+                            
                             if (existingImage instanceof TFile) {
-                                // Image exists - only update if page is new or modified
-                                if (isNew || isModified) {
+                                // Image exists - update if needed
+                                if (needsImageUpdate || backgroundChanged) {
+                                    // Process image with background color if configured
+                                    const processedImage = await this.processImageWithBackground(page.image.blob);
+                                    
                                     // Delete old image and create new one
                                     await this.app.vault.delete(existingImage);
-                                    const imageArrayBuffer = await page.image.blob.arrayBuffer();
-                                    imageFile = await this.app.vault.createBinary(normalizedImagePath, imageArrayBuffer);
+                                    imageFile = await this.app.vault.createBinary(normalizedImagePath, processedImage);
+                                    
+                                    console.log(`Updated image for page ${pageNum} (new: ${isNew}, modified: ${isModified}, bg changed: ${backgroundChanged})`);
                                 } else {
                                     // Use existing image
                                     imageFile = existingImage;
                                 }
                             } else {
-                                // Create new image
-                                const imageArrayBuffer = await page.image.blob.arrayBuffer();
-                                imageFile = await this.app.vault.createBinary(normalizedImagePath, imageArrayBuffer);
+                                // Create new image with background if configured
+                                const processedImage = await this.processImageWithBackground(page.image.blob);
+                                imageFile = await this.app.vault.createBinary(normalizedImagePath, processedImage);
                             }
                             
                             pageContent += `![[${imageName}]]\n\n`;
@@ -1885,7 +2077,6 @@ export default class ViwoodsImporterPlugin extends Plugin {
                             }
                         } catch (imageError) {
                             console.error(`Failed to process image for page ${pageNum}:`, imageError);
-                            // Continue without image rather than failing the whole page
                             pageContent += `*[Image failed to import]*\n\n`;
                         }
                     }
@@ -1930,11 +2121,12 @@ export default class ViwoodsImporterPlugin extends Plugin {
                     manifest.importedPages[pageNum] = {
                         fileName: pageFileName,
                         importDate: new Date().toISOString(),
-                        imageHash: page.image.hash,
+                        imageHash: page.image.hash, // This is the hash of the ORIGINAL image from the .note file
                         geminiProcessed: manifest.importedPages[pageNum]?.geminiProcessed || false,
                         hasAudio: !!page.audio,
                         lastModified: new Date().toISOString(),
-                        size: page.image.blob.size
+                        size: page.image.blob.size,
+                        backgroundColor: this.settings.backgroundColor // Track what background was applied
                     };
                     
                 } catch (error: any) {
@@ -1970,71 +2162,76 @@ export default class ViwoodsImporterPlugin extends Plugin {
         
         return summary;
     }
+    
+    async processImageWithBackground(blob: Blob): Promise<ArrayBuffer> {
+        // If no background color or transparent/white, return original
+        if (!this.settings.backgroundColor || 
+            this.settings.backgroundColor === 'transparent' || 
+            this.settings.backgroundColor === '#FFFFFF') {
+            return await blob.arrayBuffer();
+        }
+        
+        // Apply background color
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            if (!ctx) {
+                reject(new Error('Could not get canvas context'));
+                return;
+            }
+            
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                
+                // Fill background
+                ctx.fillStyle = this.settings.backgroundColor;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw image on top
+                ctx.drawImage(img, 0, 0);
+                
+                // Convert to blob
+                canvas.toBlob(async (processedBlob) => {
+                    if (processedBlob) {
+                        resolve(await processedBlob.arrayBuffer());
+                    } else {
+                        reject(new Error('Failed to process image'));
+                    }
+                }, 'image/png', 1.0);
+            };
+            
+            img.onerror = () => {
+                reject(new Error('Failed to load image'));
+            };
+            
+            img.src = URL.createObjectURL(blob);
+        });
+    }
 
     async createBookIndex(bookFolder: string, bookName: string, manifest: ImportManifest) {
-        const indexPath = `${bookFolder}/${bookName} Index.md`;
+        const indexPath = `${bookFolder}/Index.md`;
         
-        let indexContent = `# ${bookName}\n\n`;
-        indexContent += `**Total Pages:** ${manifest.totalPages}\n`;
-        indexContent += `**Imported Pages:** ${Object.keys(manifest.importedPages).length}\n`;
-        indexContent += `**Last Import:** ${new Date(manifest.lastImport).toLocaleString()}\n\n`;
+        // Generate the book tag
+        const bookTag = bookName
+            .toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^a-z0-9-_]/g, '')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
         
-        // Add history section if available
-        if (manifest.history && manifest.history.length > 0) {
-            indexContent += '## Import History\n\n';
-            indexContent += '| Date | Action | Pages | Summary |\n';
-            indexContent += '|------|--------|-------|----------|\n';
-            
-            manifest.history.slice(0, 10).forEach(entry => {
-                const date = new Date(entry.date).toLocaleDateString();
-                const pages = entry.pages.length > 5 
-                    ? `${entry.pages.slice(0, 5).join(', ')}... (${entry.pages.length} total)`
-                    : entry.pages.join(', ');
-                indexContent += `| ${date} | ${entry.action} | ${pages} | ${entry.summary} |\n`;
-            });
-            indexContent += '\n';
-        }
+        // Create minimal index with just the dataview query
+        let indexContent = '---\n';
+        indexContent += 'cssclasses: cards\n';
+        indexContent += '---\n\n';
         
-        indexContent += '## Pages\n\n';
-        
-        // Create a grid of page links
-        indexContent += '| | | | | | | | | | |\n';
-        indexContent += '|---|---|---|---|---|---|---|---|---|---|\n';
-        
-        let row = '|';
-        for (let i = 1; i <= manifest.totalPages; i++) {
-            const pageInfo = manifest.importedPages[i];
-            const pageNumStr = String(i).padStart(3, '0');
-            
-            if (pageInfo) {
-                let linkText = `${i}`;
-                if (pageInfo.hasAudio) linkText = `🎙️ ${linkText}`;
-                if (pageInfo.geminiProcessed) linkText = `${linkText} 🤖`;
-                row += ` [[Page ${pageNumStr}\\|${linkText}]] |`;
-            } else {
-                row += ` ${i} |`;
-            }
-            
-            // Start new row every 10 pages
-            if (i % 10 === 0) {
-                indexContent += row + '\n';
-                row = '|';
-            }
-        }
-        
-        // Add remaining cells
-        if (manifest.totalPages % 10 !== 0) {
-            const remaining = 10 - (manifest.totalPages % 10);
-            for (let i = 0; i < remaining; i++) {
-                row += ' |';
-            }
-            indexContent += row + '\n';
-        }
-        
-        indexContent += '\n## Legend\n\n';
-        indexContent += '- 🎙️ Has audio recording\n';
-        indexContent += '- 🤖 Processed with Gemini AI\n';
-        indexContent += '- Gray numbers = Not yet imported\n';
+        indexContent += '```dataview\n';
+        indexContent += 'TABLE embed(link(image))\n';
+        indexContent += `FROM #${bookTag}\n`;
+        indexContent += 'SORT page ASC\n';
+        indexContent += '```\n';
         
         const existingIndex = this.app.vault.getAbstractFileByPath(indexPath);
         if (existingIndex instanceof TFile) {
@@ -2060,8 +2257,6 @@ export default class ViwoodsImporterPlugin extends Plugin {
         
         new Notice(`Processing ${imageFiles.length} pages with Gemini AI...`);
         
-        const allDetectedTags: Set<string> = new Set();
-        
         for (const { file, pageNum } of imageFiles) {
             try {
                 const imageData = await this.app.vault.readBinary(file);
@@ -2073,12 +2268,14 @@ export default class ViwoodsImporterPlugin extends Plugin {
                         processedText = await geminiPlugin.processTriggersInText(resultText);
                     }
                     
-                    // Extract tags
+                    // Extract tags FOR THIS PAGE ONLY
+                    const pageDetectedTags: Set<string> = new Set();
+                    
                     const tagRegex = /### Detected Tags\s*\n(.*?)(?:\n###|$)/s;
                     const match = processedText.match(tagRegex);
                     if (match && match[1] && match[1].toLowerCase().trim() !== 'none identified.') {
                         const tags = match[1].split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag);
-                        tags.forEach((tag: string) => allDetectedTags.add(tag));
+                        tags.forEach((tag: string) => pageDetectedTags.add(tag));
                     }
                     
                     // Update the page file
@@ -2093,25 +2290,43 @@ export default class ViwoodsImporterPlugin extends Plugin {
                         content = content.replace(placeholder, replacement);
                         await this.app.vault.modify(pageFile, content);
                         
-                        // Update page metadata with detected tags
-                        if (allDetectedTags.size > 0) {
-                            await this.app.fileManager.processFrontMatter(pageFile, (frontmatter) => {
-                                frontmatter.tags = frontmatter.tags || [];
-                                if (!Array.isArray(frontmatter.tags)) {
-                                    frontmatter.tags = [frontmatter.tags];
+                        // Update page metadata with detected tags FOR THIS PAGE
+                        await this.app.fileManager.processFrontMatter(pageFile, (frontmatter) => {
+                            frontmatter.tags = frontmatter.tags || [];
+                            if (!Array.isArray(frontmatter.tags)) {
+                                frontmatter.tags = [frontmatter.tags];
+                            }
+                            
+                            // Create book tag from book name (should already exist but ensure it's there)
+                            const bookTag = manifest.bookName
+                                .toLowerCase()
+                                .replace(/\s+/g, '-')
+                                .replace(/[^a-z0-9-_]/g, '')
+                                .replace(/-+/g, '-')
+                                .replace(/^-|-$/g, '');
+                            
+                            // Ensure core tags are present
+                            const coreTags = ['viwoods-import', 'handwritten', bookTag];
+                            coreTags.forEach(tag => {
+                                if (!frontmatter.tags.includes(tag)) {
+                                    frontmatter.tags.push(tag);
                                 }
-                                
-                                // Add detected tags
-                                allDetectedTags.forEach((tag: string) => {
-                                    if (!frontmatter.tags.includes(tag)) {
-                                        frontmatter.tags.push(tag);
-                                    }
-                                });
-                                
-                                // Mark as Gemini processed
-                                frontmatter.gemini_processed = true;
                             });
-                        }
+                            
+                            // Add detected tags FOR THIS PAGE ONLY
+                            pageDetectedTags.forEach((tag: string) => {
+                                if (!frontmatter.tags.includes(tag)) {
+                                    frontmatter.tags.push(tag);
+                                }
+                            });
+                            
+                            // Mark as Gemini processed
+                            frontmatter.gemini_processed = true;
+                            // Ensure original hash is preserved
+                            if (!frontmatter.original_image_hash && manifest.importedPages[pageNum]) {
+                                frontmatter.original_image_hash = manifest.importedPages[pageNum].imageHash;
+                            }
+                        });
                         
                         // Update manifest
                         if (manifest.importedPages[pageNum]) {
