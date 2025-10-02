@@ -1900,20 +1900,12 @@ export default class ViwoodsImporterPlugin extends Plugin {
             if (!folderExists) {
                 try {
                     await this.app.vault.createFolder(normalizedPath);
-                } catch (error: any) {
-                    // If it's a "Folder already exists" error, that's fine - continue
-                    if (error.message && error.message.toLowerCase().includes('already exists')) {
-                        continue;
-                    }
-                    
-                    // For any other error, check if the folder exists now
+                } catch (error) {
                     const checkAgain = this.app.vault.getAbstractFileByPath(normalizedPath);
                     if (!checkAgain) {
-                        // Only log and throw if folder truly doesn't exist
                         console.error(`Failed to create folder ${normalizedPath}:`, error);
                         throw error;
                     }
-                    // If folder exists, continue without error
                 }
             }
         }

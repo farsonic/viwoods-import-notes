@@ -1,8 +1,422 @@
-/*
+/* Scoped styles for the Viwoods SVG Viewer */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.viwoods-svg-viewer {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
 
-If your plugin does not need CSS, delete this file.
+.viwoods-svg-viewer .container {
+    background: white;
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+}
 
-*/
+.viwoods-svg-viewer h1 {
+    color: #333;
+    text-align: center;
+    margin: 0 0 20px 0;
+    font-size: 2.5em;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.viwoods-svg-viewer .info-box {
+    background: #e3f2fd;
+    border-left: 4px solid #2196F3;
+    padding: 15px;
+    border-radius: 5px;
+}
+
+.viwoods-svg-viewer .info-box h3 {
+    margin-top: 0;
+    color: #1976D2;
+}
+
+.viwoods-svg-viewer .info-box ol {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.viwoods-svg-viewer .controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.viwoods-svg-viewer .control-group {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+.viwoods-svg-viewer .control-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #666;
+    font-weight: 500;
+}
+
+.viwoods-svg-viewer .control-group input[type="range"] {
+    width: calc(100% - 50px);
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.viwoods-svg-viewer .control-group span {
+    display: inline-block;
+    width: 30px;
+    text-align: center;
+    font-weight: bold;
+    color: #333;
+}
+
+.viwoods-svg-viewer .control-group select, .viwoods-svg-viewer .control-group input[type="color"] {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+.viwoods-svg-viewer .control-group input:focus, .viwoods-svg-viewer .control-group select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.viwoods-svg-viewer #pageNavigation {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 10px;
+}
+
+.viwoods-svg-viewer #pageNavigation h3 {
+    margin: 0 0 15px 0;
+    color: #555;
+}
+
+.viwoods-svg-viewer .page-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-bottom: 15px;
+}
+
+.viwoods-svg-viewer #pageSelector {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.viwoods-svg-viewer .page-button {
+    padding: 8px 12px;
+    margin: 2px;
+    border: 2px solid #ddd;
+    background: white;
+    color: #666;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: normal;
+    transition: all 0.3s;
+}
+
+.viwoods-svg-viewer .page-button.active {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
+}
+
+.viwoods-svg-viewer .page-button.selected {
+    background: #e3f2fd;
+    color: #1976D2;
+    border-color: #667eea;
+    font-weight: bold;
+}
+
+.viwoods-svg-viewer .pen-mapping-section {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 10px;
+    margin: 20px 0;
+}
+
+.viwoods-svg-viewer .pen-mapping-section h3 {
+    margin-top: 0;
+    color: #555;
+}
+
+.viwoods-svg-viewer .pen-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.viwoods-svg-viewer .pen-summary-item {
+    background: white;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
+}
+
+.viwoods-svg-viewer .pen-summary-item strong {
+    color: #1976D2;
+}
+
+.viwoods-svg-viewer .pen-analysis {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    padding: 15px;
+    border-radius: 5px;
+    margin: 15px 0;
+}
+
+.viwoods-svg-viewer .pen-analysis h4 {
+    margin-top: 0;
+    color: #856404;
+}
+
+.viwoods-svg-viewer .pattern-info {
+    font-family: monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 3px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.viwoods-svg-viewer .pen-mappings {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-top: 15px;
+}
+
+.viwoods-svg-viewer .pen-mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+}
+
+.viwoods-svg-viewer .pen-mapping-table th {
+    background: #f0f0f0;
+    padding: 10px;
+    text-align: left;
+    border: 1px solid #ddd;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.viwoods-svg-viewer .pen-mapping-table td {
+    padding: 8px;
+    border: 1px solid #ddd;
+}
+
+.viwoods-svg-viewer .pen-mapping-table input[type="text"],
+.viwoods-svg-viewer .pen-mapping-table input[type="number"],
+.viwoods-svg-viewer .pen-mapping-table input[type="color"],
+.viwoods-svg-viewer .pen-mapping-table select {
+    width: 100%;
+    padding: 4px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.viwoods-svg-viewer .pen-mapping-table .pen-id {
+    font-family: monospace;
+    font-weight: bold;
+    background: #e8f4f8;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+
+.viwoods-svg-viewer .status-known {
+    color: green;
+    font-weight: bold;
+}
+
+.viwoods-svg-viewer .status-unknown {
+    color: orange;
+    font-weight: bold;
+}
+
+.viwoods-svg-viewer .quick-assign {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.viwoods-svg-viewer .quick-assign button {
+    padding: 5px 10px;
+    font-size: 12px;
+    background: #e8f4f8;
+    border: 1px solid #667eea;
+    color: #667eea;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.viwoods-svg-viewer .quick-assign button:hover {
+    background: #667eea;
+    color: white;
+}
+
+.viwoods-svg-viewer .canvas-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    min-height: 500px;
+}
+
+.viwoods-svg-viewer .canvas-wrapper {
+    background: var(--background-secondary); /* Use Obsidian's theme color */
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    min-height: 500px;
+    position: relative;
+}
+
+.viwoods-svg-viewer #replayProgress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    -webkit-appearance: none;
+    appearance: none;
+    display: none;
+}
+
+.viwoods-svg-viewer #replayProgress::-webkit-progress-bar {
+    background-color: #eee;
+}
+
+.viwoods-svg-viewer #replayProgress::-webkit-progress-value {
+    background-color: #667eea;
+}
+
+.viwoods-svg-viewer .canvas-wrapper h3 {
+    margin: 0 0 15px 0;
+    color: var(--text-normal); /* Use Obsidian's theme color */
+    font-size: 1.2em;
+    flex-shrink: 0;
+}
+
+.viwoods-svg-viewer .canvas-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    min-height: 450px;
+}
+
+.viwoods-svg-viewer canvas, .viwoods-svg-viewer svg {
+    border: 2px solid var(--background-modifier-border); /* Use Obsidian's theme color */
+    border-radius: 10px;
+    background: white;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    display: block;
+}
+
+.viwoods-svg-viewer .button-group {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 20px 0;
+    border-top: 2px solid #f0f0f0;
+}
+
+.viwoods-svg-viewer .file-input-wrapper {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    cursor: pointer;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 12px 30px;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.viwoods-svg-viewer .file-input-wrapper:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+}
+
+.viwoods-svg-viewer .file-input-wrapper input[type="file"] {
+    position: absolute;
+    left: -9999px;
+}
+
+.viwoods-svg-viewer button {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 12px 30px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.viwoods-svg-viewer button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+}
+
+.viwoods-svg-viewer button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.viwoods-svg-viewer button.small {
+    padding: 6px 12px;
+    font-size: 14px;
+}
+
+.viwoods-svg-viewer .stats {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+.viwoods-svg-viewer .stats h3 {
+    margin-top: 0;
+    color: #555;
+}
+
+.viwoods-svg-viewer .stats p {
+    margin: 5px 0;
+    color: #666;
+}
+
+@media (max-width: 768px) {
+    .viwoods-svg-viewer .canvas-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .viwoods-svg-viewer .controls {
+        grid-template-columns: 1fr;
+    }
+}
